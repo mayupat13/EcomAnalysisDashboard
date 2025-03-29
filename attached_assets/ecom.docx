@@ -1,0 +1,30 @@
+Prompt:  
+"Create a fully functional eCommerce control panel web app using Next.js and MongoDB. The app should be built with reusable components and be fully responsive across all screen sizes. It must support both light and dark themes.  
+
+ Key Features:  
+1. Dashboard – Display sales analytics, recent orders, stock alerts, and quick actions.  
+2. User & Role Management – Implement authentication, authorization, and role-based access.  
+3. Product Management – CRUD operations, category filtering, stock tracking, bulk import/export.  
+4. Order Management – Process orders, update statuses, generate invoices, handle refunds.  
+5. Customer Management – View profiles, track orders, segment customers, support chat.  
+6. Payment & Transactions – Integrate Stripe/PayPal, store transactions, manage refunds.  
+7. Shipping & Delivery – Configure shipping methods, courier tracking, cost calculation.  
+8. Discount & Coupons – Create/manage discount codes with expiration and usage limits.  
+9. Reviews & Ratings – Allow customers to review products, with admin moderation.  
+10. Reports & Analytics – Generate and export sales/product reports with visual insights.  
+11. Notifications System – Email/SMS alerts for orders, low stock, and promotions.  
+12. SEO & Marketing Tools – Blog system, email campaigns, Google Analytics integration.  
+
+ Tech Stack & Requirements:  
+- Frontend: Next.js (React), TypeScript, TailwindCSS  
+- State Management: Zustand / Redux  
+- Backend: Next.js API routes with Express.js  
+- Database: MongoDB with Mongoose ORM  
+- Authentication: NextAuth.js (JWT-based)  
+- UI Components: Build reusable, accessible, and responsive components  
+- Theme Support: Implement system-based light/dark theme toggle  
+- API Integration: Write all required REST APIs and connect them to UI components  
+- Deployment: Ensure it is optimized for Vercel deployment  
+
+Follow clean architecture, ensure proper error handling, and include detailed comments in the code. Optimize performance with server-side rendering (SSR) and static generation (SSG) where applicable."
+
