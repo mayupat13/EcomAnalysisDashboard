@@ -52,12 +52,17 @@ export function formatCurrency(amount: number): string {
  */
 export function formatDate(
   dateString: string | Date,
-  options: Intl.DateTimeFormatOptions = {
-    year: 'numeric',
-    month: 'short',
-    day: 'numeric',
-  },
+  options?: Intl.DateTimeFormatOptions,
 ): string {
   const date = typeof dateString === 'string' ? new Date(dateString) : dateString;
+
+  // If no options provided, use ISO format with custom formatting for consistency
+  if (!options) {
+    // Use a date format that's consistent regardless of locale
+    // Returns DD/MM/YYYY
+    return date.toISOString().split('T')[0].split('-').reverse().join('/');
+  }
+
+  // Otherwise use the Intl formatter with the provided options
   return new Intl.DateTimeFormat('en-US', options).format(date);
 }

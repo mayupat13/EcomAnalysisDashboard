@@ -29,6 +29,7 @@ interface AnalyticsPageProps {
   }[];
   conversionRate: number;
   averageOrderValue: number;
+  error?: string;
 }
 
 export default function AnalyticsPage({
@@ -37,6 +38,7 @@ export default function AnalyticsPage({
   topCustomers,
   conversionRate,
   averageOrderValue,
+  error,
 }: AnalyticsPageProps) {
   return (
     <Layout>
@@ -44,10 +46,22 @@ export default function AnalyticsPage({
         <title>Analytics | eCommerce Control Panel</title>
       </Head>
       <div className="px-4 py-6">
-        <div className="mb-6">
-          <h1 className="text-2xl font-bold">Analytics</h1>
-          <p className="text-gray-600 dark:text-gray-300">View insights and performance metrics</p>
+        <div className="mb-6 flex justify-between items-center">
+          <div>
+            <h1 className="text-2xl font-bold">Analytics Dashboard</h1>
+            <p className="text-gray-600 dark:text-gray-300">Overview of your store's performance</p>
+          </div>
+          {/* Date range selector could go here */}
         </div>
+
+        {error && (
+          <div
+            className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
 
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
           <Card className="p-6">
@@ -231,9 +245,17 @@ export default function AnalyticsPage({
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getSession(context);
+  const { req } = context;
 
-  if (!session) {
+  // Check for access token in cookies
+  const token = req.cookies['access_token'];
+  console.log(
+    'Analytics Page - Server-side token check:',
+    token ? 'Token present' : 'No token found',
+  );
+
+  if (!token) {
+    console.log('Analytics Page - No access token found, redirecting to login');
     return {
       redirect: {
         destination: '/login',
@@ -242,116 +264,120 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     };
   }
 
-  await dbConnect();
+  try {
+    // Construct the API URL properly
+    const apiUrl =
+      process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:3000';
+    console.log('Analytics Page - Using API URL:', apiUrl);
 
-  // Generate revenue data for the last 30 days
-  const last30Days = Array.from({ length: 30 }, (_, i) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (29 - i));
-    return date.toISOString().split('T')[0];
-  });
+    // Fetch sales analytics data
+    const salesResponse = await fetch(`${apiUrl}/api/analytics/sales`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Cookie: req.headers.cookie || '',
+      },
+      credentials: 'include',
+    });
 
-  const revenueData = {
-    labels: last30Days.map((date) => {
-      const d = new Date(date);
-      return `${d.getMonth() + 1}/${d.getDate()}`;
-    }),
-    data: await Promise.all(
-      last30Days.map(async (date) => {
-        const startDate = new Date(date);
-        const endDate = new Date(date);
-        endDate.setDate(endDate.getDate() + 1);
+    console.log('Analytics Page - Sales API response status:', salesResponse.status);
 
-        const dailyOrders = await Order.find({
-          createdAt: {
-            $gte: startDate,
-            $lt: endDate,
+    if (!salesResponse.ok) {
+      if (salesResponse.status === 401) {
+        console.log('Analytics Page - Authentication failed, redirecting to login');
+        return {
+          redirect: {
+            destination: '/login',
+            permanent: false,
           },
-        }).select('totalAmount');
+        };
+      }
 
-        return dailyOrders.reduce((sum, order) => sum + order.totalAmount, 0);
-      }),
-    ),
-  };
+      // Log the error but don't throw
+      console.error(
+        `Analytics Page - Failed to fetch sales analytics: ${salesResponse.statusText}`,
+      );
 
-  // Get top selling products
-  const topProducts = await Order.aggregate([
-    { $unwind: '$items' },
-    {
-      $group: {
-        _id: '$items.product',
-        totalSold: { $sum: '$items.quantity' },
-        totalRevenue: { $sum: { $multiply: ['$items.price', '$items.quantity'] } },
-      },
-    },
-    { $sort: { totalRevenue: -1 } },
-    { $limit: 5 },
-    {
-      $lookup: {
-        from: 'products',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'productDetails',
-      },
-    },
-    { $unwind: '$productDetails' },
-    {
-      $project: {
-        _id: 1,
-        name: '$productDetails.name',
-        totalSold: 1,
-        totalRevenue: 1,
-      },
-    },
-  ]);
+      // Return empty data instead of throwing an error
+      return {
+        props: {
+          revenueData: { labels: [], data: [] },
+          topProducts: [],
+          topCustomers: [],
+          conversionRate: 0,
+          averageOrderValue: 0,
+          error: `Failed to load analytics data: ${salesResponse.statusText}`,
+        },
+      };
+    }
 
-  // Get top customers
-  const topCustomers = await Order.aggregate([
-    {
-      $group: {
-        _id: '$customer',
-        orderCount: { $sum: 1 },
-        totalSpent: { $sum: '$totalAmount' },
-      },
-    },
-    { $sort: { totalSpent: -1 } },
-    { $limit: 5 },
-    {
-      $lookup: {
-        from: 'customers',
-        localField: '_id',
-        foreignField: '_id',
-        as: 'customerDetails',
-      },
-    },
-    { $unwind: '$customerDetails' },
-    {
-      $project: {
-        _id: 1,
-        name: '$customerDetails.name',
-        orderCount: 1,
-        totalSpent: 1,
-      },
-    },
-  ]);
+    const salesData = await salesResponse.json();
+    console.log('Analytics Page - Successfully loaded sales data');
 
-  // Calculate conversion rate (simplified, normally would use visitor data)
-  const totalOrders = await Order.countDocuments({});
-  const totalVisitors = 5000; // Example value for demonstration
-  const conversionRate = (totalOrders / totalVisitors) * 100;
+    // Prepare revenue data for use
+    const revenueData = {
+      labels: salesData.labels || [],
+      data: salesData.revenue || [],
+    };
 
-  // Calculate average order value
-  const allOrders = await Order.find({}).select('totalAmount');
-  const totalRevenue = allOrders.reduce((sum, order) => sum + order.totalAmount, 0);
-  const averageOrderValue = totalOrders > 0 ? totalRevenue / totalOrders : 0;
+    // Fetch product analytics data with proper error handling
+    const productsResponse = await fetch(`${apiUrl}/api/analytics/products`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Cookie: req.headers.cookie || '',
+      },
+      credentials: 'include',
+    });
 
-  return {
-    props: {
-      revenueData,
-      topProducts: JSON.parse(JSON.stringify(topProducts)),
-      topCustomers: JSON.parse(JSON.stringify(topCustomers)),
-      conversionRate,
-      averageOrderValue,
-    },
-  };
+    console.log('Analytics Page - Products API response status:', productsResponse.status);
+
+    if (!productsResponse.ok) {
+      console.error(
+        `Analytics Page - Failed to fetch product analytics: ${productsResponse.statusText}`,
+      );
+
+      // Continue with sales data but note the product data error
+      return {
+        props: {
+          revenueData,
+          topProducts: [],
+          topCustomers: salesData.topCustomers || [],
+          conversionRate: salesData.conversionRate || 0,
+          averageOrderValue: salesData.averageOrderValue || 0,
+          error: `Unable to load product analytics: ${productsResponse.statusText}`,
+        },
+      };
+    }
+
+    const productsData = await productsResponse.json();
+
+    // Prepare data for the component
+    const topProducts = productsData.topSellingProducts || [];
+    const topCustomers = salesData.topCustomers || [];
+    const conversionRate = salesData.conversionRate || 0;
+    const averageOrderValue = salesData.averageOrderValue || 0;
+
+    return {
+      props: {
+        revenueData,
+        topProducts,
+        topCustomers,
+        conversionRate,
+        averageOrderValue,
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
+    return {
+      props: {
+        revenueData: { labels: [], data: [] },
+        topProducts: [],
+        topCustomers: [],
+        conversionRate: 0,
+        averageOrderValue: 0,
+        error: 'An error occurred while loading analytics data',
+      },
+    };
+  }
 };

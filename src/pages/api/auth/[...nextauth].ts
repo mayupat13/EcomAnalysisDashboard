@@ -56,13 +56,15 @@ export const authOptions: NextAuthOptions = {
   debug: process.env.NODE_ENV === 'development',
   logger: {
     error(code, ...message) {
-      console.error(code, ...message);
+      console.error('NextAuth Error:', code, ...message);
     },
     warn(code, ...message) {
-      console.warn(code, ...message);
+      console.warn('NextAuth Warning:', code, ...message);
     },
     debug(code, ...message) {
-      console.debug(code, ...message);
+      if (process.env.DEBUG_ENABLED === '1') {
+        console.debug('NextAuth Debug:', code, ...message);
+      }
     },
   },
   callbacks: {

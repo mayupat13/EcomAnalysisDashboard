@@ -10,8 +10,10 @@ import Button from '@/components/ui/Button';
 import Input from '@/components/ui/Input';
 import Select from '@/components/ui/Select';
 import { useProductsStore } from '@/store/products';
+import authService from '@/lib/authService';
+import api from '@/lib/api';
 
-export default function ProductsPage() {
+export default function ProductsPage({ initialCategories }: { initialCategories: string[] }) {
   const router = useRouter();
   const { q, category, page = '1' } = router.query;
   const [searchTerm, setSearchTerm] = useState((q as string) || '');
@@ -19,29 +21,70 @@ export default function ProductsPage() {
   const currentPage = Number(page) || 1;
   const itemsPerPage = 10;
 
-  const { products, fetchProducts, isLoading, error, categories, fetchCategories } =
+  const { products, fetchProducts, isLoading, error, categories, fetchCategories, set } =
     useProductsStore();
 
   useEffect(() => {
+    // Initialize categories from server-side props
+    if (initialCategories.length > 0) {
+      set({ categories: initialCategories });
+      return;
+    }
+
+    // Check if we're authenticated before fetching data
+    const token = authService.getAccessToken();
+    if (!token) {
+      console.log('No auth token found, redirecting to login');
+      router.push('/login');
+      return;
+    }
+
     // Fetch categories on component mount
-    fetchCategories();
-    // Remove fetchCategories from dependencies - it shouldn't change between renders
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
+    console.log('Fetching categories...');
+    fetchCategories().catch((err) => {
+      console.error('Error fetching categories:', err);
+      if (err.response?.status === 401) {
+        console.log('Unauthorized, redirecting to login');
+        router.push('/login');
+      }
+    });
+  }, [initialCategories]);
 
   useEffect(() => {
+    // Check if we're authenticated before fetching products
+    const token = authService.getAccessToken();
+    if (!token) {
+      console.log('No auth token found, redirecting to login');
+      router.push('/login');
+      return;
+    }
+
     // Fetch products when the router query parameters change
     const fetchData = async () => {
-      await fetchProducts({
+      console.log('Fetching products with params:', {
         q: q || '',
         category: category || '',
         page: currentPage,
         limit: itemsPerPage,
       });
+
+      try {
+        await fetchProducts({
+          q: q || '',
+          category: category || '',
+          page: currentPage,
+          limit: itemsPerPage,
+        });
+      } catch (err: any) {
+        console.error('Error fetching products:', err);
+        if (err.response?.status === 401) {
+          console.log('Unauthorized, redirecting to login');
+          router.push('/login');
+        }
+      }
     };
 
     fetchData();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [q, category, currentPage, itemsPerPage]);
 
   const handleSearch = (e: React.FormEvent) => {
@@ -157,10 +200,14 @@ export default function ProductsPage() {
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  // Check for access token in cookies directly
-  const token = context.req.cookies['access_token'];
+  const { req } = context;
+
+  // Check for access token in cookies
+  const token = req.cookies['access_token'];
+  console.log('Server-side token check:', token ? 'Token present' : 'No token found');
 
   if (!token) {
+    console.log('No access token found in cookies, redirecting to login');
     return {
       redirect: {
         destination: '/login',
@@ -169,7 +216,41 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     };
   }
 
-  return {
-    props: {},
-  };
+  try {
+    // Create a new axios instance for server-side requests
+    const response = await fetch(
+      `${process.env.API_URL || 'http://localhost:3000'}/api/products/categories`,
+      {
+        headers: {
+          Authorization: `Bearer ${token}`,
+          'Content-Type': 'application/json',
+        },
+      },
+    );
+
+    console.log('Server-side response status:', response.status);
+    console.log('Server-side response headers:', Object.fromEntries(response.headers.entries()));
+
+    if (!response.ok) {
+      const errorText = await response.text();
+      console.error('Server-side error response:', errorText);
+      throw new Error(`Failed to fetch categories: ${response.statusText}`);
+    }
+
+    const data = await response.json();
+    console.log('Server-side categories data:', data);
+
+    return {
+      props: {
+        initialCategories: data.categories || [],
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
+    return {
+      props: {
+        initialCategories: [],
+      },
+    };
+  }
 };

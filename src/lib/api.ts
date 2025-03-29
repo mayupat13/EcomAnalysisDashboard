@@ -33,8 +33,16 @@ class ApiService {
   private refreshTokenPromise: Promise<string> | null = null;
 
   constructor() {
+    // Determine the base URL based on the environment
+    const baseURL =
+      typeof window !== 'undefined'
+        ? process.env.NEXT_PUBLIC_API_URL || ''
+        : process.env.API_URL || 'http://localhost:3000';
+
+    console.log('API Client baseURL:', baseURL);
+
     this.axios = axios.create({
-      baseURL: process.env.NEXT_PUBLIC_API_URL || '',
+      baseURL,
       headers: {
         'Content-Type': 'application/json',
       },
@@ -60,35 +68,69 @@ class ApiService {
   private async handleRequestInterceptor(
     config: InternalAxiosRequestConfig,
   ): Promise<InternalAxiosRequestConfig> {
+    // Skip logging for NextAuth session checks
+    if (config.url && config.url.includes('/api/auth/session')) {
+      return config;
+    }
+
+    console.log('Request interceptor - URL:', config.url);
+
     // Check if we need to add the auth token
     if (
       config.url &&
       !config.url.includes('/auth/login') &&
       !config.url.includes('/auth/refresh')
     ) {
-      const token = authService.getAccessToken();
+      // Try to get token from cookies first
+      const cookies = config.headers?.Cookie;
+      let token = null;
+
+      if (cookies) {
+        const accessTokenMatch = cookies.match(/access_token=([^;]+)/);
+        if (accessTokenMatch) {
+          token = accessTokenMatch[1];
+          console.log('Found token in cookies');
+        }
+      }
+
+      // If no token in cookies, try authService
+      if (!token) {
+        token = authService.getAccessToken();
+        console.log('Getting token from authService:', token ? 'Present' : 'Missing');
+      }
 
       if (token) {
         try {
           if (authService.isTokenExpired(token)) {
+            console.log('Token expired, attempting refresh');
             // Token is expired, refresh it
             const newToken = await this.refreshToken();
             if (newToken) {
               config.headers.set('Authorization', `Bearer ${newToken}`);
+              console.log('Token refreshed successfully');
             } else {
+              console.log('Token refresh failed');
               // If refresh failed, handle auth failure
               this.handleAuthFailure();
             }
           } else {
             // Token is valid, include it
             config.headers.set('Authorization', `Bearer ${token}`);
+            console.log('Using existing valid token');
           }
         } catch (error) {
+          console.error('Error in request interceptor:', error);
           // If any error occurs during token validation, clear tokens and handle failure
-          console.error('Error validating token:', error);
           this.handleAuthFailure();
         }
+      } else {
+        console.log('No token available for request');
       }
+    }
+
+    // Skip detailed header logging for NextAuth session checks
+    if (!config.url?.includes('/api/auth/session')) {
+      console.log('Final request headers:', config.headers);
     }
 
     return config;
@@ -97,44 +139,75 @@ class ApiService {
   /**
    * Handle API response errors including auth failures
    */
-  private async handleResponseError(error: AxiosError): Promise<any> {
-    const originalRequest = error.config;
+  private async handleResponseError(error: any): Promise<never> {
+    if (error.response) {
+      // Special handling for 400 errors on /api/auth/session which appear to be normal
+      if (error.response.status === 400 && error.config?.url?.includes('/api/auth/session')) {
+        // This is a next-auth internal call that we can gracefully handle
+        console.log('CLIENT_FETCH_ERROR', {
+          error: {}, // Don't log the full error to avoid noise
+          url: error.config.url,
+        });
 
-    // Check if the error is a 401 Unauthorized
-    if (error.response?.status === 401 && originalRequest) {
-      // Don't retry if already attempted or it's a refresh token request
-      if ((originalRequest as any)._retry || originalRequest.url?.includes('/auth/refresh')) {
-        // Handle auth failure and logout
-        this.handleAuthFailure();
-        return Promise.reject(error);
+        // Don't treat this as a fatal error
+        // Instead return a mock "no session" response to prevent crashes
+        return Promise.reject({
+          ...error,
+          _handled: true,
+          _mockSessionError: true,
+        });
       }
 
-      // Mark as retry attempt
-      (originalRequest as any)._retry = true;
+      // The request was made and the server responded with a status code
+      // that falls out of the range of 2xx
+      console.error('API Response Error:', {
+        status: error.response.status,
+        statusText: error.response.statusText,
+        data: error.response.data,
+        headers: error.response.headers,
+        url: error.config?.url,
+      });
 
-      try {
-        // Try to refresh the token
-        const newToken = await this.refreshToken();
+      // Handle 401 Unauthorized errors
+      if (error.response.status === 401) {
+        console.error('Authentication error: Token invalid or expired');
 
-        if (newToken && originalRequest.headers) {
-          // Update the auth header with new token
-          originalRequest.headers['Authorization'] = `Bearer ${newToken}`;
-
-          // Retry the original request with new token
-          return this.axios(originalRequest);
-        } else {
-          // If refresh failed, handle auth failure
-          this.handleAuthFailure();
-          return Promise.reject(error);
+        // Try to refresh token on 401 errors that are not from a refresh request
+        if (
+          error.config?.url &&
+          !error.config.url.includes('/auth/refresh') &&
+          !error.config.url.includes('/auth/login')
+        ) {
+          try {
+            console.log('Attempting to refresh token due to 401 error');
+            const newToken = await this.refreshToken();
+            if (newToken) {
+              console.log('Token refreshed, retrying original request');
+              // Retry the original request with the new token
+              const originalRequest = error.config;
+              originalRequest.headers.Authorization = `Bearer ${newToken}`;
+              return this.axios(originalRequest);
+            }
+          } catch (refreshError) {
+            console.error('Token refresh failed:', refreshError);
+            this.handleAuthFailure();
+          }
         }
-      } catch (refreshError) {
-        // If refresh throws, handle auth failure
-        this.handleAuthFailure();
-        return Promise.reject(error);
       }
+    } else if (error.request) {
+      // The request was made but no response was received
+      console.error('API Request Error (No Response):', {
+        request: error.request,
+        url: error.config?.url,
+      });
+    } else {
+      // Something happened in setting up the request that triggered an Error
+      console.error('API Error:', error.message, {
+        url: error.config?.url,
+      });
     }
 
-    // Return the original error for other error types
+    // Forward the error
     return Promise.reject(error);
   }
 
@@ -162,13 +235,14 @@ class ApiService {
     const refreshToken = authService.getRefreshToken();
 
     if (!refreshToken) {
-      // No refresh token available
+      console.log('No refresh token available');
       return Promise.resolve(null);
     }
 
     // Create the refresh token promise
     this.refreshTokenPromise = new Promise<string>(async (resolve, reject) => {
       try {
+        console.log('Attempting token refresh');
         // Use a fresh axios instance for token refresh to avoid interceptors
         const response = await axios.post(
           `${process.env.NEXT_PUBLIC_API_URL || ''}/api/auth/refresh`,
@@ -181,14 +255,17 @@ class ApiService {
         );
 
         if (response.data?.accessToken && response.data?.refreshToken) {
+          console.log('Token refresh successful');
           // Store new tokens
           authService.setTokens(response.data.accessToken, response.data.refreshToken);
           resolve(response.data.accessToken);
         } else {
+          console.log('Token refresh failed - invalid response');
           authService.clearTokens();
           reject(new Error('Failed to refresh token'));
         }
       } catch (error) {
+        console.error('Error during token refresh:', error);
         // Any error in token refresh should clear tokens
         authService.clearTokens();
         reject(error);

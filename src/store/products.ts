@@ -1,14 +1,17 @@
 import { create } from 'zustand';
 import api from '@/lib/api';
 import { ProductType } from '@/types';
+import authService from '@/lib/authService';
 
 interface ProductsState {
   products: ProductType[];
   isLoading: boolean;
   error: string | null;
+  categories: string[];
 
   // Helper methods
   handleApiError: (error: any, defaultMessage: string) => string;
+  set: (state: Partial<ProductsState>) => void;
 
   // Product list actions
   fetchProducts: (params?: Record<string, any>) => Promise<{
@@ -24,7 +27,6 @@ interface ProductsState {
   deleteProduct: (id: string) => Promise<boolean>;
 
   // Category actions
-  categories: string[];
   fetchCategories: () => Promise<void>;
 }
 
@@ -45,6 +47,11 @@ export const useProductsStore = create<ProductsState>((set, get) => ({
     }
 
     return defaultMessage;
+  },
+
+  // State management
+  set: (state: Partial<ProductsState>) => {
+    set(state);
   },
 
   // Product list actions
@@ -171,17 +178,58 @@ export const useProductsStore = create<ProductsState>((set, get) => ({
   },
 
   fetchCategories: async () => {
+    console.log('=== fetchCategories START ===');
+    console.log('Current categories state:', get().categories);
+
     // If categories are already loaded, don't make another request
     if (get().categories.length > 0) {
+      console.log('Categories already loaded, skipping fetch');
       return;
     }
 
+    set({ isLoading: true, error: null });
+    console.log('Making API request to /api/products/categories');
+
     try {
-      const response = await api.get('/api/products/categories');
-      set({ categories: response.categories || [] });
+      // Log the current auth state
+      const token = authService.getAccessToken();
+      console.log('Current auth token:', token ? 'Present' : 'Missing');
+
+      // Get cookies for server-side requests
+      const cookies = typeof window !== 'undefined' ? document.cookie : '';
+
+      const response = await api.get('/api/products/categories', undefined, {
+        headers: {
+          Cookie: cookies,
+        },
+      });
+
+      console.log('API Response:', response);
+
+      set({
+        categories: response.categories || [],
+        isLoading: false,
+      });
+      console.log('Categories updated successfully:', response.categories || []);
     } catch (error: any) {
-      console.error('Failed to fetch categories:', error);
-      // Don't set error state here to avoid UI disruption for category fetch failures
+      console.error('=== fetchCategories ERROR ===');
+      console.error('Error details:', {
+        message: error.message,
+        status: error.response?.status,
+        statusText: error.response?.statusText,
+        data: error.response?.data,
+      });
+
+      const errorMessage = get().handleApiError(error, 'Failed to fetch categories');
+      console.error('Processed error message:', errorMessage);
+
+      set({
+        error: errorMessage,
+        isLoading: false,
+        categories: [], // Reset categories on error
+      });
+    } finally {
+      console.log('=== fetchCategories END ===');
     }
   },
 }));

@@ -24,6 +24,8 @@ export default function Layout({ children }: LayoutProps) {
   useEffect(() => {
     const checkAuth = () => {
       const token = authService.getAccessToken();
+      console.log(`Layout auth check - path: ${router.pathname}, token present:`, !!token);
+
       if (!token) {
         return false;
       }
@@ -31,10 +33,15 @@ export default function Layout({ children }: LayoutProps) {
       try {
         // Verify token is valid
         const tokenData = authService.parseToken(token);
-        if (!tokenData || authService.isTokenExpired(token)) {
+        const isExpired = authService.isTokenExpired(token);
+        console.log('Layout auth check - token expired:', isExpired);
+
+        if (!tokenData || isExpired) {
+          console.log('Layout auth check - clearing invalid token');
           authService.clearTokens();
           return false;
         }
+        console.log('Layout auth check - valid token for:', tokenData.email);
         return true;
       } catch (error) {
         console.error('Error verifying token:', error);
@@ -48,6 +55,9 @@ export default function Layout({ children }: LayoutProps) {
 
     // Redirect to login if not authenticated on protected pages
     if (!authStatus && !isAuthPage && !isRedirecting) {
+      console.log(
+        `Layout auth check - redirecting to login due to no auth, current path: ${router.pathname}`,
+      );
       setIsRedirecting(true);
       router.push('/login');
     }

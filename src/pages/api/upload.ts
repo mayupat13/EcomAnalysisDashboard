@@ -3,6 +3,10 @@ import { getSession } from 'next-auth/react';
 import formidable, { File, Fields, Files } from 'formidable';
 import fs from 'fs';
 import path from 'path';
+import jwt from 'jsonwebtoken';
+
+// JWT Secret should be in environment variables
+const JWT_SECRET = process.env.JWT_SECRET || 'your-secret-key';
 
 // Disable the default body parser to allow formidable to parse the request
 export const config = {
@@ -12,15 +16,62 @@ export const config = {
 };
 
 export default async function handler(req: NextApiRequest, res: NextApiResponse) {
-  const session = await getSession({ req });
-
-  // Check authentication
-  if (!session) {
-    return res.status(401).json({ message: 'Not authenticated' });
+  // Handle CORS preflight requests
+  if (req.method === 'OPTIONS') {
+    res.setHeader('Access-Control-Allow-Origin', '*');
+    res.setHeader('Access-Control-Allow-Methods', 'POST, OPTIONS');
+    res.setHeader('Access-Control-Allow-Headers', 'Content-Type, Authorization');
+    return res.status(200).end();
   }
 
+  // Only allow POST for actual uploads
   if (req.method !== 'POST') {
     return res.status(405).json({ message: 'Method not allowed' });
+  }
+
+  // Check authentication via session or JWT token
+  let isAuthenticated = false;
+
+  console.log('Upload endpoint: Processing request');
+  console.log('Upload endpoint: Headers present:', Object.keys(req.headers).join(', '));
+  console.log(
+    'Upload endpoint: Authorization header present:',
+    req.headers.authorization ? 'Yes' : 'No',
+  );
+  console.log('Upload endpoint: Cookie header present:', req.headers.cookie ? 'Yes' : 'No');
+
+  // Check for session first (next-auth)
+  const session = await getSession({ req });
+  if (session) {
+    isAuthenticated = true;
+    console.log('Upload endpoint: Authenticated via session');
+  }
+  // If no session, check for JWT token in Authorization header
+  else {
+    try {
+      const authHeader = req.headers.authorization;
+      console.log(
+        'Upload endpoint: Authorization header:',
+        authHeader ? authHeader.substring(0, 15) + '...' : 'None',
+      );
+
+      if (authHeader && authHeader.startsWith('Bearer ')) {
+        const token = authHeader.split(' ')[1];
+        jwt.verify(token, JWT_SECRET);
+        isAuthenticated = true;
+        console.log('Upload endpoint: Authenticated via JWT token');
+      } else {
+        console.log('Upload endpoint: No valid Authorization header found');
+      }
+    } catch (error) {
+      console.error('JWT verification error:', error);
+    }
+  }
+
+  // Check authentication
+  if (!isAuthenticated) {
+    console.log('Upload endpoint: Authentication failed');
+    return res.status(401).json({ message: 'Not authenticated' });
   }
 
   try {

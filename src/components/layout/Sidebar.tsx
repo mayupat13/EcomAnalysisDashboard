@@ -37,22 +37,46 @@ export default function Sidebar({ onClose }: SidebarProps) {
     if (route === '/dashboard' && router.pathname === '/dashboard') {
       return true;
     }
-    return router.pathname.startsWith(route) && route !== '/dashboard';
+    // Special case for nested routes like /dashboard/orders/[id]
+    if (route !== '/dashboard' && router.pathname.startsWith(route)) {
+      return true;
+    }
+    return false;
   };
 
   // Handle link navigation with authentication check
   const handleLinkClick = (e: React.MouseEvent, href: string) => {
     e.preventDefault();
+    console.log(`Sidebar - Navigation attempt to: ${href}`);
 
     if (!isAuthenticated) {
+      console.log('Sidebar - Not authenticated, redirecting to login');
       authService.clearTokens();
       router.push('/login');
     } else {
-      // For authenticated routes, use router.push to handle client-side navigation
+      // Close sidebar on mobile if needed
       if (onClose) onClose();
 
-      // Use Next.js router for client-side navigation
-      router.push(href);
+      console.log(`Sidebar - Navigating to: ${href}`);
+
+      // Extract base path and potential ID for better navigation
+      const parts = href.split('/');
+      const hasId = parts.length > 3 && parts[3] !== '';
+
+      if (hasId) {
+        console.log(`Sidebar - Path has ID: ${parts[3]}`);
+        // Use router.push with proper Next.js route pattern for dynamic routes
+        router.push(
+          {
+            pathname: `/${parts[1]}/${parts[2]}/[id]`,
+            query: { id: parts[3] },
+          },
+          href,
+        );
+      } else {
+        // Use simple path for non-dynamic routes
+        router.push(href);
+      }
     }
   };
 

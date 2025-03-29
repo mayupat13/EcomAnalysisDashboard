@@ -16,9 +16,10 @@ interface OrdersPageProps {
   orders: OrderType[];
   totalCount: number;
   statuses: string[];
+  error?: string;
 }
 
-export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageProps) {
+export default function OrdersPage({ orders, totalCount, statuses, error }: OrdersPageProps) {
   const router = useRouter();
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedStatus, setSelectedStatus] = useState('');
@@ -32,8 +33,8 @@ export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageP
       query: {
         ...(searchTerm && { q: searchTerm }),
         ...(selectedStatus && { status: selectedStatus }),
-        page: 1
-      }
+        page: 1,
+      },
     });
   };
 
@@ -44,8 +45,8 @@ export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageP
       query: {
         ...(searchTerm && { q: searchTerm }),
         ...(e.target.value && { status: e.target.value }),
-        page: 1
-      }
+        page: 1,
+      },
     });
   };
 
@@ -56,8 +57,8 @@ export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageP
       query: {
         ...(searchTerm && { q: searchTerm }),
         ...(selectedStatus && { status: selectedStatus }),
-        page
-      }
+        page,
+      },
     });
   };
 
@@ -84,10 +85,7 @@ export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageP
                 />
               </div>
               <div className="w-full md:w-48">
-                <Select
-                  value={selectedStatus}
-                  onChange={handleStatusChange}
-                >
+                <Select value={selectedStatus} onChange={handleStatusChange}>
                   <option value="">All Statuses</option>
                   {statuses.map((status) => (
                     <option key={status} value={status}>
@@ -101,8 +99,17 @@ export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageP
           </div>
         </div>
 
-        <OrderList 
-          orders={orders} 
+        {error && (
+          <div
+            className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
+
+        <OrderList
+          orders={orders}
           currentPage={currentPage}
           totalPages={Math.ceil(totalCount / itemsPerPage)}
           onPageChange={handlePageChange}
@@ -113,9 +120,14 @@ export default function OrdersPage({ orders, totalCount, statuses }: OrdersPageP
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getSession(context);
-  
-  if (!session) {
+  const { req } = context;
+
+  // Check for access token in cookies
+  const token = req.cookies['access_token'];
+  console.log('Server-side token check:', token ? 'Token present' : 'No token found');
+
+  if (!token) {
+    console.log('No access token found in cookies, redirecting to login');
     return {
       redirect: {
         destination: '/login',
@@ -124,44 +136,71 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     };
   }
 
-  const { q, status, page = 1 } = context.query;
-  const itemsPerPage = 10;
-  const skip = (Number(page) - 1) * itemsPerPage;
+  try {
+    // Construct the API URL properly
+    const apiUrl =
+      process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:3000';
+    console.log('Orders Page - Using API URL:', apiUrl);
 
-  await dbConnect();
+    // Fetch orders data
+    const ordersResponse = await fetch(`${apiUrl}/api/orders?page=1&limit=10`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Cookie: req.headers.cookie || '',
+      },
+      credentials: 'include',
+    });
 
-  // Build query
-  const query: any = {};
-  if (q) {
-    query.$or = [
-      { orderNumber: { $regex: q, $options: 'i' } },
-      { 'customerDetails.name': { $regex: q, $options: 'i' } },
-      { 'customerDetails.email': { $regex: q, $options: 'i' } }
-    ];
+    console.log('Orders Page - API response status:', ordersResponse.status);
+
+    if (!ordersResponse.ok) {
+      if (ordersResponse.status === 401) {
+        console.log('Orders Page - Authentication failed, redirecting to login');
+        return {
+          redirect: {
+            destination: '/login',
+            permanent: false,
+          },
+        };
+      }
+
+      // Log the error but don't throw
+      console.error(`Orders Page - Failed to fetch orders: ${ordersResponse.statusText}`);
+
+      // Return empty data instead of throwing an error
+      return {
+        props: {
+          orders: [],
+          totalCount: 0,
+          statuses: ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'],
+          error: `Failed to load orders: ${ordersResponse.statusText}`,
+        },
+      };
+    }
+
+    const ordersData = await ordersResponse.json();
+    console.log('Orders Page - Successfully loaded orders data');
+
+    // Get unique statuses for filter dropdowns
+    const statuses = Array.from(new Set(ordersData.orders.map((order: any) => order.status)));
+
+    return {
+      props: {
+        orders: ordersData.orders || [],
+        totalCount: ordersData.totalCount || 0,
+        statuses: statuses || ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'],
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
+    return {
+      props: {
+        orders: [],
+        totalCount: 0,
+        statuses: ['Pending', 'Processing', 'Shipped', 'Delivered', 'Cancelled'],
+        error: 'An error occurred while loading orders',
+      },
+    };
   }
-  if (status) {
-    query.status = status;
-  }
-
-  // Get orders
-  const orders = await Order.find(query)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(itemsPerPage)
-    .populate('customer', 'name email')
-    .lean();
-
-  // Get total count
-  const totalCount = await Order.countDocuments(query);
-
-  // Get all statuses
-  const allStatuses = await Order.distinct('status');
-
-  return {
-    props: {
-      orders: JSON.parse(JSON.stringify(orders)),
-      totalCount,
-      statuses: allStatuses,
-    },
-  };
 };

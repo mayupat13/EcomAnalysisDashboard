@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { GetServerSideProps } from 'next';
 import { getSession } from 'next-auth/react';
 import { useRouter } from 'next/router';
@@ -12,15 +12,24 @@ import Customer from '@/models/Customer';
 import { CustomerType } from '@/types';
 
 interface CustomersPageProps {
-  customers: CustomerType[];
+  initialCustomers: CustomerType[];
   totalCount: number;
+  error?: string;
 }
 
-export default function CustomersPage({ customers, totalCount }: CustomersPageProps) {
+export default function CustomersPage({ initialCustomers, totalCount, error }: CustomersPageProps) {
   const router = useRouter();
+  const [customers, setCustomers] = useState<CustomerType[]>(initialCustomers || []);
   const [searchTerm, setSearchTerm] = useState('');
   const [currentPage, setCurrentPage] = useState(1);
   const itemsPerPage = 10;
+
+  // Initialize customers from props
+  useEffect(() => {
+    if (initialCustomers?.length > 0) {
+      setCustomers(initialCustomers);
+    }
+  }, [initialCustomers]);
 
   const handleSearch = (e: React.FormEvent) => {
     e.preventDefault();
@@ -28,8 +37,8 @@ export default function CustomersPage({ customers, totalCount }: CustomersPagePr
       pathname: '/dashboard/customers',
       query: {
         ...(searchTerm && { q: searchTerm }),
-        page: 1
-      }
+        page: 1,
+      },
     });
   };
 
@@ -39,8 +48,8 @@ export default function CustomersPage({ customers, totalCount }: CustomersPagePr
       pathname: '/dashboard/customers',
       query: {
         ...(searchTerm && { q: searchTerm }),
-        page
-      }
+        page,
+      },
     });
   };
 
@@ -52,7 +61,7 @@ export default function CustomersPage({ customers, totalCount }: CustomersPagePr
       <div className="px-4 py-6">
         <div className="mb-6">
           <h1 className="text-2xl font-bold">Customers</h1>
-          <p className="text-gray-600 dark:text-gray-300">Manage your customer database</p>
+          <p className="text-gray-600 dark:text-gray-300">Manage your customers</p>
         </div>
 
         <div className="bg-white dark:bg-gray-800 rounded-lg shadow-sm mb-6">
@@ -61,7 +70,7 @@ export default function CustomersPage({ customers, totalCount }: CustomersPagePr
               <div className="flex-grow">
                 <Input
                   type="text"
-                  placeholder="Search by name, email or phone..."
+                  placeholder="Search by name or email..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
                 />
@@ -71,8 +80,17 @@ export default function CustomersPage({ customers, totalCount }: CustomersPagePr
           </div>
         </div>
 
-        <CustomerList 
-          customers={customers} 
+        {error && (
+          <div
+            className="bg-red-100 border border-red-400 text-red-700 px-4 py-3 rounded relative mb-6"
+            role="alert"
+          >
+            {error}
+          </div>
+        )}
+
+        <CustomerList
+          customers={customers}
           currentPage={currentPage}
           totalPages={Math.ceil(totalCount / itemsPerPage)}
           onPageChange={handlePageChange}
@@ -83,9 +101,17 @@ export default function CustomersPage({ customers, totalCount }: CustomersPagePr
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
-  const session = await getSession(context);
-  
-  if (!session) {
+  const { req } = context;
+
+  // Check for access token in cookies
+  const token = req.cookies['access_token'];
+  console.log(
+    'Customers Page - Server-side token check:',
+    token ? 'Token present' : 'No token found',
+  );
+
+  if (!token) {
+    console.log('Customers Page - No access token found, redirecting to login');
     return {
       redirect: {
         destination: '/login',
@@ -94,36 +120,65 @@ export const getServerSideProps: GetServerSideProps = async (context) => {
     };
   }
 
-  const { q, page = 1 } = context.query;
-  const itemsPerPage = 10;
-  const skip = (Number(page) - 1) * itemsPerPage;
+  try {
+    // Construct the API URL properly
+    const apiUrl =
+      process.env.NEXT_PUBLIC_API_URL || process.env.API_URL || 'http://localhost:3000';
+    console.log('Customers Page - Using API URL:', apiUrl);
 
-  await dbConnect();
+    // Fetch customers data
+    const customersResponse = await fetch(`${apiUrl}/api/customers?page=1&limit=10`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        'Content-Type': 'application/json',
+        Cookie: req.headers.cookie || '',
+      },
+      credentials: 'include',
+    });
 
-  // Build query
-  const query: any = {};
-  if (q) {
-    query.$or = [
-      { name: { $regex: q, $options: 'i' } },
-      { email: { $regex: q, $options: 'i' } },
-      { phone: { $regex: q, $options: 'i' } }
-    ];
+    console.log('Customers Page - API response status:', customersResponse.status);
+
+    if (!customersResponse.ok) {
+      if (customersResponse.status === 401) {
+        console.log('Customers Page - Authentication failed, redirecting to login');
+        return {
+          redirect: {
+            destination: '/login',
+            permanent: false,
+          },
+        };
+      }
+
+      // Log the error but don't throw
+      console.error(`Customers Page - Failed to fetch customers: ${customersResponse.statusText}`);
+
+      // Return empty data instead of throwing an error
+      return {
+        props: {
+          initialCustomers: [],
+          totalCount: 0,
+          error: `Failed to load customers: ${customersResponse.statusText}`,
+        },
+      };
+    }
+
+    const customersData = await customersResponse.json();
+    console.log('Customers Page - Successfully loaded customers data');
+
+    return {
+      props: {
+        initialCustomers: customersData.customers || [],
+        totalCount: customersData.totalCount || 0,
+      },
+    };
+  } catch (error) {
+    console.error('Error in getServerSideProps:', error);
+    return {
+      props: {
+        initialCustomers: [],
+        totalCount: 0,
+        error: 'An error occurred while loading customers',
+      },
+    };
   }
-
-  // Get customers
-  const customers = await Customer.find(query)
-    .sort({ createdAt: -1 })
-    .skip(skip)
-    .limit(itemsPerPage)
-    .lean();
-
-  // Get total count
-  const totalCount = await Customer.countDocuments(query);
-
-  return {
-    props: {
-      customers: JSON.parse(JSON.stringify(customers)),
-      totalCount,
-    },
-  };
 };

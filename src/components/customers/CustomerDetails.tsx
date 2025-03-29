@@ -10,11 +10,17 @@ import { formatCurrency, formatDate } from '@/lib/auth';
 interface CustomerDetailsProps {
   customer: CustomerType;
   orders: OrderType[];
+  totalSpent: number;
+  orderCount: number;
 }
 
-export default function CustomerDetails({ customer, orders }: CustomerDetailsProps) {
+export default function CustomerDetails({
+  customer,
+  orders,
+  totalSpent,
+  orderCount,
+}: CustomerDetailsProps) {
   const [deleteModalOpen, setDeleteModalOpen] = useState(false);
-  const totalSpent = orders.reduce((sum, order) => sum + order.totalAmount, 0);
 
   // Format date for display
   const formatDisplayDate = (dateString: string) => {
@@ -78,7 +84,7 @@ export default function CustomerDetails({ customer, orders }: CustomerDetailsPro
                     Total Orders
                   </dt>
                   <dd className="mt-1 text-lg font-semibold text-gray-900 dark:text-gray-100">
-                    {orders.length}
+                    {orderCount}
                   </dd>
                 </div>
                 <div>

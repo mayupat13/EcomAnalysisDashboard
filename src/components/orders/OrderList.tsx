@@ -1,9 +1,13 @@
 import Link from 'next/link';
+import { useRouter } from 'next/router';
 import Card from '@/components/ui/Card';
 import Table from '@/components/ui/Table';
 import Pagination from '@/components/ui/Pagination';
 import { OrderType } from '@/types';
 import { formatCurrency } from '@/lib/auth';
+
+// Import the formatDate function from auth.ts
+import { formatDate as formatDateFromAuth } from '@/lib/auth';
 
 interface OrderListProps {
   orders: OrderType[];
@@ -18,16 +22,15 @@ export default function OrderList({
   totalPages,
   onPageChange,
 }: OrderListProps) {
-  // Format date function
-  const formatDate = (dateString: string) => {
+  const router = useRouter();
+
+  // Format date function with time - use a consistent method that works on both server and client
+  const formatDateWithTime = (dateString: string) => {
     const date = new Date(dateString);
-    return new Intl.DateTimeFormat('en-US', {
-      year: 'numeric',
-      month: 'short',
-      day: 'numeric',
-      hour: '2-digit',
-      minute: '2-digit',
-    }).format(date);
+    // Use ISO string parts to ensure consistent formatting
+    const datePart = date.toISOString().split('T')[0].split('-').reverse().join('/');
+    const timePart = date.toISOString().split('T')[1].substring(0, 5);
+    return `${datePart} ${timePart}`;
   };
 
   // Helper to get status badge color
@@ -50,6 +53,42 @@ export default function OrderList({
     }
   };
 
+  // Handler for clicking on an order
+  const handleOrderClick = (e: React.MouseEvent, orderId: string) => {
+    e.preventDefault();
+
+    if (!orderId) {
+      console.error('OrderList - Cannot navigate: Order ID is missing');
+      return;
+    }
+
+    console.log(`OrderList - Navigating to order: ${orderId}`);
+    console.log('OrderList - Using navigation pattern:', {
+      pathname: '/dashboard/orders/[id]',
+      query: { id: orderId },
+      as: `/dashboard/orders/${orderId}`,
+    });
+
+    // Ensure a clean navigation by using the router directly
+    router.push(
+      {
+        pathname: '/dashboard/orders/[id]',
+        query: { id: orderId },
+      },
+      `/dashboard/orders/${orderId}`,
+      { shallow: false },
+    );
+  };
+
+  // Helper to render the order ID
+  const renderOrderId = (order: OrderType) => {
+    if (!order._id) {
+      console.warn('OrderList - Order has no ID:', order);
+      return '#' + order.orderNumber;
+    }
+    return '#' + order.orderNumber;
+  };
+
   return (
     <Card>
       <div className="overflow-x-auto">
@@ -69,13 +108,13 @@ export default function OrderList({
               orders.map((order) => (
                 <tr key={order._id}>
                   <td className="font-medium text-gray-900 dark:text-gray-100">
-                    #{order.orderNumber}
+                    {renderOrderId(order)}
                   </td>
                   <td className="text-gray-500 dark:text-gray-400">
                     {(order.customer as any)?.name || 'N/A'}
                   </td>
                   <td className="text-gray-500 dark:text-gray-400">
-                    {formatDate(order.createdAt)}
+                    {formatDateWithTime(order.createdAt)}
                   </td>
                   <td className="text-gray-500 dark:text-gray-400">
                     {formatCurrency(order.totalAmount)}
@@ -90,12 +129,17 @@ export default function OrderList({
                     </span>
                   </td>
                   <td>
-                    <Link
-                      href={`/dashboard/orders/${order._id}`}
-                      className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-900 dark:hover:text-indigo-300"
-                    >
-                      View
-                    </Link>
+                    {order._id ? (
+                      <Link
+                        href={`/dashboard/orders/${order._id}`}
+                        className="text-indigo-600 dark:text-indigo-400 hover:text-indigo-900 dark:hover:text-indigo-300"
+                        onClick={(e) => handleOrderClick(e, order._id)}
+                      >
+                        View
+                      </Link>
+                    ) : (
+                      <span className="text-gray-400">Not available</span>
+                    )}
                   </td>
                 </tr>
               ))

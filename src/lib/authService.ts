@@ -36,14 +36,18 @@ class AuthService {
    * Get the access token from cookies
    */
   getAccessToken(): string | null {
-    return Cookies.get(ACCESS_TOKEN_KEY) || null;
+    const token = Cookies.get(ACCESS_TOKEN_KEY);
+    console.log('Getting access token:', token ? 'Present' : 'Missing');
+    return token || null;
   }
 
   /**
    * Get the refresh token from cookies
    */
   getRefreshToken(): string | null {
-    return Cookies.get(REFRESH_TOKEN_KEY) || null;
+    const token = Cookies.get(REFRESH_TOKEN_KEY);
+    console.log('Getting refresh token:', token ? 'Present' : 'Missing');
+    return token || null;
   }
 
   /**
@@ -87,7 +91,13 @@ class AuthService {
         jsonPayload = buff.toString('utf-8');
       }
 
-      return JSON.parse(jsonPayload);
+      const payload = JSON.parse(jsonPayload);
+      console.log('Parsed token payload:', {
+        ...payload,
+        exp: new Date(payload.exp * 1000).toISOString(),
+      });
+
+      return payload;
     } catch (e) {
       console.error('Error parsing token:', e);
       return null;
@@ -100,12 +110,24 @@ class AuthService {
   isTokenExpired(token: string): boolean {
     try {
       const payload = this.parseToken(token);
-      if (!payload || !payload.exp) return true;
+      if (!payload || !payload.exp) {
+        console.log('Token validation: No payload or expiration found');
+        return true;
+      }
 
       // Get expiration time and convert to milliseconds
       const expiryTime = payload.exp * 1000;
-      // Add a small buffer (30 seconds) to account for network latency
-      return Date.now() >= expiryTime - 30000;
+      const currentTime = Date.now();
+      const isExpired = currentTime >= expiryTime - 30000; // 30 second buffer
+
+      console.log('Token validation:', {
+        currentTime,
+        expiryTime,
+        isExpired,
+        timeUntilExpiry: expiryTime - currentTime,
+      });
+
+      return isExpired;
     } catch (e) {
       console.error('Error checking token expiry:', e);
       return true;

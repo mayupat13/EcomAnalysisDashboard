@@ -56,9 +56,18 @@ export default function NewProductPage({ categories }: { categories: string[] })
 }
 
 export const getServerSideProps: GetServerSideProps = async (context) => {
+  const { req } = context;
+
   try {
+    // Forward cookies from the client request
+    const cookies = req.headers.cookie || '';
+
     // Fetch categories for the form
-    const categoriesData = await api.get('/api/products/categories');
+    const categoriesData = await api.get('/api/products/categories', undefined, {
+      headers: {
+        Cookie: cookies,
+      },
+    });
 
     return {
       props: {

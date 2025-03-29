@@ -5,6 +5,7 @@ import Select from '@/components/ui/Select';
 import Button from '@/components/ui/Button';
 import { ProductType } from '@/types';
 import api from '@/lib/api';
+import authService from '@/lib/authService';
 
 interface ProductFormProps {
   initialData?: ProductType;
@@ -72,11 +73,24 @@ export default function ProductForm({
   };
 
   const handleImageUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
-    const files = e.target.files;
-    if (!files || files.length === 0) return;
+    if (!e.target.files || e.target.files.length === 0) return;
 
-    const newFiles = Array.from(files);
-    setUploadedImages((prev) => [...prev, ...newFiles]);
+    const newFiles = Array.from(e.target.files);
+
+    // Check file types and sizes
+    const validTypes = ['image/jpeg', 'image/png', 'image/gif', 'image/webp'];
+    const maxSize = 5 * 1024 * 1024; // 5MB
+
+    const invalidFile = newFiles.find(
+      (file) => !validTypes.includes(file.type) || file.size > maxSize,
+    );
+
+    if (invalidFile) {
+      setUploadError(
+        `Invalid file: ${invalidFile.name}. Please ensure all files are images (JPG, PNG, GIF, WebP) and under 5MB.`,
+      );
+      return;
+    }
 
     // Generate temporary preview URLs for the new files
     const tempPreviewUrls = newFiles.map((file) => URL.createObjectURL(file));
@@ -92,18 +106,32 @@ export default function ProductForm({
         formData.append('files', file);
       });
 
-      const response = await api.post('/api/upload', formData, {
+      // Get the access token
+      const accessToken = authService.getAccessToken() || '';
+
+      // Use native fetch for multipart/form-data uploads instead of axios-based API service
+      const response = await fetch('/api/upload', {
+        method: 'POST',
         headers: {
-          'Content-Type': 'multipart/form-data',
+          Authorization: `Bearer ${accessToken}`,
+          // Don't set Content-Type header - browser will set it with the correct boundary
         },
+        body: formData,
+        credentials: 'include', // Send cookies for authentication
       });
 
-      if (response.data && response.data.urls) {
+      if (!response.ok) {
+        throw new Error(`Upload failed with status ${response.status}: ${response.statusText}`);
+      }
+
+      const data = await response.json();
+
+      if (data && data.urls) {
         // Replace temporary URLs with actual server URLs
         // Keep existing URLs and append new ones
         setImagePreviewUrls((prev) => {
           const oldUrls = prev.slice(0, prev.length - newFiles.length);
-          return [...oldUrls, ...response.data.urls];
+          return [...oldUrls, ...data.urls];
         });
       }
     } catch (error) {
